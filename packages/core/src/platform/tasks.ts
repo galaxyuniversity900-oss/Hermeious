@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DependencyAwareExecutor, ExecutableCapabilityPlan, DagExecutionResult } from '../index.js';
+import type { DependencyAwareExecutor, ExecutableCapabilityPlan, DagExecutionResult } from '../dag-executor.js';
 import { ApprovalManager } from './approvals.js';
 import { ArtifactStore } from './artifacts.js';
 import { EventBus, type RuntimeEvent } from './events.js';
