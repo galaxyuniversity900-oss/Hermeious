@@ -6,6 +6,8 @@ import { CostController } from '../src/platform/cost.js';
 import { validateQuality, rules } from '../src/platform/validation.js';
 import { PluginRegistry } from '../src/platform/plugins.js';
 import { assertSafeProviderUrl } from '../src/platform/security.js';
+import { EventBus } from '../src/platform/events.js';
+import { TaskManager } from '../src/platform/tasks.js';
 
 test('artifact lifecycle versions outputs', () => {
   const store = new ArtifactStore();
@@ -45,4 +47,32 @@ test('plugin registry prevents duplicate capability ids', () => {
 test('provider URL safety rejects untrusted hosts', () => {
   assert.throws(() => assertSafeProviderUrl('https://evil.example/api', ['api.example']));
   assert.equal(assertSafeProviderUrl('https://api.example/v1', ['api.example']).hostname, 'api.example');
+});
+
+test('TaskManager emits approval and completion lifecycle events', async () => {
+  const approvals = new ApprovalManager();
+  const artifacts = new ArtifactStore();
+  const bus = new EventBus();
+  const emitted: string[] = [];
+  bus.subscribe(event => emitted.push(event.type));
+  const executor = {
+    async execute(plan: any) {
+      return {
+        planId: plan.id,
+        goal: plan.goal,
+        ok: true,
+        results: plan.steps.map((step: any) => ({ stepId: step.id, capability: step.capability, ok: true, result: {}, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() })),
+        outputs: {},
+      };
+    },
+  };
+  const manager = new TaskManager(executor as any, approvals, artifacts, bus);
+  const task = manager.create({ id: 'p-task', goal: 'test', steps: [{ id: 's1', capability: 'system.echo', dependsOn: [], input: { value: 'ok' } }] }, false);
+  assert.equal(task.status, 'paused');
+  assert.equal(approvals.list().length, 1);
+  await manager.approve(task.id);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(manager.get(task.id)?.status, 'completed');
+  assert.ok(emitted.includes('approval.required'));
+  assert.ok(emitted.includes('task.completed'));
 });
