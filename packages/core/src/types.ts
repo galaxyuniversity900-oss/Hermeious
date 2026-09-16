@@ -11,6 +11,14 @@ export interface CapabilityManifest {
   risk: CapabilityRisk;
   provider?: string;
   tags?: string[];
+  aliases?: string[];
+  examples?: string[];
+  metadata?: {
+    cost?: number;
+    latencyMs?: number;
+    reliability?: number;
+    [key: string]: unknown;
+  };
 }
 
 export interface CapabilityContext {
