@@ -1,6 +1,7 @@
 export { CapabilityRegistry } from './registry.js';
 export { PolicyEngine } from './policy.js';
 export { CapabilityRouter } from './router.js';
+export { SemanticCapabilityRouter } from './semantic-router.js';
 export { CapabilityPlanner } from './planner.js';
 export { CapabilityExecutor } from './executor.js';
 export { DependencyAwareExecutor } from './dag-executor.js';
@@ -14,4 +15,5 @@ export type { CapabilityHandler, CapabilityManifest, CapabilityContext, Capabili
 export type { CapabilityRequirement, CapabilityStep, CapabilityTemplate, CapabilityInputBinding } from './composer.js';
 export type { InputBinding, ExecutableCapabilityStep, ExecutableCapabilityPlan, DagStepResult, DagExecutionResult } from './dag-executor.js';
 export type { CapabilityAlternativeResolver, ReplanAttempt, FailureAwareExecutionResult } from './replanner.js';
+export type { EmbeddingProvider, CapabilityRouteConstraints, SemanticRouteOptions, SemanticRouteCandidate } from './semantic-router.js';
 export * from './platform/index.js';
