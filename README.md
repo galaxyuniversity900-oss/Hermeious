@@ -18,23 +18,36 @@ MCP / HTTP APIs / Local Sandboxed Tools
 Validator / Memory
 ```
 
-## Implemented foundation
+## Implemented
 
+### Phase 1 — Runtime foundation
 - Provider-neutral capability manifests and registry
 - Risk-aware policy/approval gate
 - OpenAI-compatible LLM adapter, suitable for DeepSeek and other compatible endpoints
 - Safe built-in `system.echo`
 - Explicit-approval `file.metadata`
 - HTTP API for health, discovery and capability execution
-- Extension points for MCP, API providers, sandboxed execution and composite capabilities
+
+### Phase 2 — Tool extension layer
+- Deterministic capability router based on IDs, descriptions and tags
+- LLM-backed JSON capability planner
+- MCP HTTP client with initialize, tool discovery and tool execution
+- MCP tools are converted into Hermeious capabilities automatically after an explicit `/mcp/connect` request
+- MCP server host allowlist to reduce SSRF risk
+- Manifest-only capability discovery with validation; no arbitrary code is auto-installed
+- CI build verification
 
 ## API
 
-- `GET /health`
-- `GET /capabilities`
-- `POST /capabilities/execute`
+- `GET /health` — runtime status
+- `GET /capabilities` — registered capabilities
+- `GET /route?goal=...` — deterministic capability candidates
+- `POST /plan` — ask the configured LLM to produce a capability plan
+- `POST /capabilities/execute` — execute one approved capability
+- `POST /mcp/connect` — explicitly connect an allowed MCP HTTP server and register its tools
+- `GET /mcp/servers` — connected MCP server names
 
-Example body:
+Example:
 
 ```json
 {"capability":"system.echo","input":{"message":"hello"}}
@@ -44,22 +57,53 @@ For medium/high/critical capabilities, send `"approved": true` only when the cal
 
 ## Configuration
 
+Copy `.env.example` and configure:
+
 ```text
 PORT=8787
+MAX_RISK=medium
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=replace_me
 LLM_MODEL=deepseek-chat
+MCP_ALLOWED_HOSTS=localhost,127.0.0.1
 ```
 
 LLM credentials are never committed to the repository. The runtime must not expose arbitrary host shell execution to an LLM; future code execution belongs behind a sandbox and policy layer.
 
+## Architecture direction
+
+The runtime is intentionally provider-neutral:
+
+```text
+             ANY LLM
+                ↓
+        Capability Planner
+                ↓
+       Capability Router
+                ↓
+        Capability Registry
+          ↙      ↓       ↘
+        MCP     HTTP     LOCAL
+         ↓       ↓         ↓
+      Browser   Video    Files
+      Search    Image    FFmpeg
+      GitHub    Voice    Blender
+                ↓
+          Policy / Approval
+                ↓
+            Executor
+                ↓
+        Validator / Memory
+```
+
 ## Roadmap
 
-1. MCP client/registry adapter
-2. Dynamic capability discovery with signed manifests and allowlists
-3. Provider resolver and fallback routing
-4. Composite capability planner
-5. Memory and provider-performance history
-6. Sandboxed code/browser/media/file execution
-7. Web console and universal API
-8. Capability marketplace
+1. ~~MCP client / registry adapter~~
+2. ~~Capability routing and LLM planning~~
+3. Signed capability manifests and stronger discovery trust model
+4. Provider resolver and fallback routing
+5. Composite capability planner and multi-step executor
+6. Memory and provider-performance history
+7. Sandboxed code/browser/media/file execution
+8. Web console and universal API
+9. Capability marketplace
