@@ -66,9 +66,10 @@ test('plugin registry prevents duplicate capability ids', () => {
   assert.throws(() => registry.register(plugin));
 });
 
-test('provider URL safety rejects untrusted hosts', () => {
+test('provider URL safety rejects untrusted and private hosts', () => {
   assert.throws(() => assertSafeProviderUrl('https://evil.example/api', ['api.example']));
-  assert.equal(assertSafeProviderUrl('https://api.example/v1', ['api.example']).hostname, 'api.example');
+  assert.throws(() => assertSafeProviderUrl('http://127.0.0.1:8080', ['127.0.0.1']));
+  assert.equal(assertSafeProviderUrl('https://api.example/v1', ['API.EXAMPLE']).hostname, 'api.example');
 });
 
 test('capability gap analyzer resolves exact and related capabilities', () => {
