@@ -32,10 +32,11 @@ Validator / Memory
 - Deterministic capability router based on IDs, descriptions and tags
 - LLM-backed JSON capability planner
 - MCP HTTP client with initialize, tool discovery and tool execution
-- MCP tools are converted into Hermeious capabilities automatically after an explicit `/mcp/connect` request
+- MCP tools are converted into Hermeious capabilities after an explicit `/mcp/connect` request
 - MCP server host allowlist to reduce SSRF risk
 - Manifest-only capability discovery with validation; no arbitrary code is auto-installed
-- CI build verification
+- Policy-aware multi-step plan executor
+- CI build and unit-test workflow
 
 ## API
 
@@ -43,7 +44,8 @@ Validator / Memory
 - `GET /capabilities` — registered capabilities
 - `GET /route?goal=...` — deterministic capability candidates
 - `POST /plan` — ask the configured LLM to produce a capability plan
-- `POST /capabilities/execute` — execute one approved capability
+- `POST /execute-plan` — execute a plan through the policy engine
+- `POST /capabilities/execute` — execute one capability
 - `POST /mcp/connect` — explicitly connect an allowed MCP HTTP server and register its tools
 - `GET /mcp/servers` — connected MCP server names
 
@@ -53,7 +55,7 @@ Example:
 {"capability":"system.echo","input":{"message":"hello"}}
 ```
 
-For medium/high/critical capabilities, send `"approved": true` only when the caller has explicitly authorized the operation.
+For medium/high/critical capabilities, send `"approved": true` only when the caller has explicitly authorized the operation. Plan execution applies the same rule to every step.
 
 ## Configuration
 
@@ -102,7 +104,7 @@ The runtime is intentionally provider-neutral:
 2. ~~Capability routing and LLM planning~~
 3. Signed capability manifests and stronger discovery trust model
 4. Provider resolver and fallback routing
-5. Composite capability planner and multi-step executor
+5. Composite capability planner with dependency-aware execution
 6. Memory and provider-performance history
 7. Sandboxed code/browser/media/file execution
 8. Web console and universal API
