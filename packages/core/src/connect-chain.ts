@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { CapabilityPlan } from './composer.js';
 import type { ExecutableCapabilityPlan, DagExecutionResult, DagExecutorOptions } from './dag-executor.js';
 import { FailureAwareExecutor, type FailureAwareExecutionResult } from './replanner.js';
 import { CapabilityRegistry } from './registry.js';
@@ -9,10 +8,7 @@ import { validatePlanPreflight, type PreflightReport } from './platform/prefligh
 import { Observability } from './observability.js';
 import { VersionedJsonStore } from './persistence.js';
 
-export interface ConnectChainModel {
-  chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>): Promise<string>;
-}
-
+export interface ConnectChainModel { chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>): Promise<string>; }
 export interface ConnectChainOptions {
   model: ConnectChainModel;
   registry: CapabilityRegistry;
@@ -26,7 +22,6 @@ export interface ConnectChainOptions {
   approved?: boolean;
   stateStore?: VersionedJsonStore<ConnectChainState>;
 }
-
 export interface ConnectChainState {
   id: string;
   goal: string;
@@ -37,11 +32,9 @@ export interface ConnectChainState {
   error?: string;
   updatedAt: string;
 }
-
-export interface ConnectChainResult {
-  state: ConnectChainState;
-  candidates: SemanticRouteCandidate[];
-}
+export interface ConnectChainResult { state: ConnectChainState; candidates: SemanticRouteCandidate[]; }
+type RawPlanStep = { id?: unknown; capability?: unknown; input?: unknown; dependsOn?: unknown };
+type RawPlan = { goal?: unknown; steps?: unknown };
 
 const SYSTEM = `You are the Hermeious orchestration planner. Return ONLY JSON.
 Schema: {"goal":string,"steps":[{"id":string,"capability":string,"input":object,"dependsOn":string[]}]}
@@ -50,35 +43,26 @@ Use only capability ids from Candidates. Build a minimal executable DAG. Every d
 export class ConnectChain {
   private readonly router: SemanticCapabilityRouter;
   private readonly observability = new Observability();
-
-  constructor(private readonly options: ConnectChainOptions) {
-    this.router = new SemanticCapabilityRouter(options.registry);
-  }
+  constructor(private readonly options: ConnectChainOptions) { this.router = new SemanticCapabilityRouter(options.registry); }
 
   async run(goal: string): Promise<ConnectChainResult> {
     const id = randomUUID();
     const span = this.observability.start('connect-chain', { goal, taskId: id });
     let state: ConnectChainState = { id, goal, status: 'planned', updatedAt: new Date().toISOString() };
     try {
-      const candidates = await this.router.route(goal, {
-        limit: this.options.candidateLimit ?? 12,
-        embeddingProvider: this.options.embeddingProvider,
-        constraints: this.options.constraints,
-      });
+      const candidates = await this.router.route(goal, { limit: this.options.candidateLimit ?? 12, embeddingProvider: this.options.embeddingProvider, constraints: this.options.constraints });
       if (!candidates.length) throw new Error('No capability candidates satisfy the request');
-
       const plan = await this.plan(goal, candidates);
       const preflight = validatePlanPreflight(plan, this.options.registry, this.options.approved ?? false);
-      state = { ...state, plan, preflight, status: 'planned', updatedAt: new Date().toISOString() };
+      state = { ...state, plan, preflight, updatedAt: new Date().toISOString() };
       await this.persist(state);
       if (!preflight.ok) throw new Error(`Plan preflight failed: ${preflight.issues.filter(i => i.severity === 'error').map(i => i.message).join('; ')}`);
-
       state = { ...state, status: 'running', updatedAt: new Date().toISOString() };
       await this.persist(state);
       const executor = new FailureAwareExecutor(
         this.options.registry,
         this.options.policy,
-        ({ capability, step }) => this.alternatives(capability, step.capability),
+        ({ capability }) => this.alternatives(capability),
         this.options.concurrency ?? 4,
         this.options.maxReplans ?? 2,
         this.options.executorOptions ?? {},
@@ -91,7 +75,7 @@ export class ConnectChain {
     } catch (error) {
       state = { ...state, status: 'failed', error: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString() };
       await this.persist(state);
-      this.observability.end(span, { ok: false, error: state.error });
+      this.observability.end(span, { ok: false }, error);
       throw Object.assign(new Error(state.error), { state });
     }
   }
@@ -99,42 +83,26 @@ export class ConnectChain {
   getTrace() { return this.observability.list(); }
 
   private async plan(goal: string, candidates: SemanticRouteCandidate[]): Promise<ExecutableCapabilityPlan> {
-    const prompt = JSON.stringify(candidates.map(candidate => ({
-      id: candidate.capability,
-      description: candidate.manifest.description,
-      inputSchema: candidate.manifest.inputSchema,
-      outputSchema: candidate.manifest.outputSchema,
-      risk: candidate.manifest.risk,
-      score: candidate.score,
-    })));
-    const raw = await this.options.model.chat([
-      { role: 'system', content: SYSTEM },
-      { role: 'user', content: `Goal: ${goal}\nCandidates: ${prompt}` },
-    ]);
+    const prompt = JSON.stringify(candidates.map(candidate => ({ id: candidate.capability, description: candidate.manifest.description, inputSchema: candidate.manifest.inputSchema, outputSchema: candidate.manifest.outputSchema, risk: candidate.manifest.risk, score: candidate.score })));
+    const raw = await this.options.model.chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: `Goal: ${goal}\nCandidates: ${prompt}` }]);
     const parsed = parsePlan(raw);
     const allowed = new Set(candidates.map(candidate => candidate.capability));
-    const steps = parsed.steps
-      .filter(step => allowed.has(step.capability))
-      .map((step, index) => ({
-        id: step.id?.trim() || `step-${index + 1}`,
-        capability: step.capability,
-        input: step.input ?? {},
-        dependsOn: Array.isArray(step.dependsOn) ? step.dependsOn : [],
-      }));
+    const steps = parsed.steps.filter(step => allowed.has(step.capability)).map((step, index) => ({
+      id: typeof step.id === 'string' && step.id.trim() ? step.id.trim() : `step-${index + 1}`,
+      capability: step.capability,
+      input: isRecord(step.input) ? step.input : {},
+      dependsOn: Array.isArray(step.dependsOn) ? step.dependsOn.filter((dep): dep is string => typeof dep === 'string') : [],
+    }));
     if (!steps.length) throw new Error('Planner produced no executable steps');
     const ids = new Set(steps.map(step => step.id));
+    if (ids.size !== steps.length) throw new Error('Planner produced duplicate step ids');
     for (const step of steps) for (const dep of step.dependsOn) if (!ids.has(dep)) throw new Error(`Planner dependency not found: ${dep}`);
     return { id: randomUUID(), goal, steps };
   }
 
-  private alternatives(requested: string, failedCapability: string): string[] {
-    const candidates = this.options.registry.list().filter(manifest => manifest.id !== failedCapability);
+  private alternatives(requested: string): string[] {
     const target = requested.toLowerCase();
-    return candidates
-      .map(manifest => ({ id: manifest.id, score: this.aliasScore(target, manifest.id, manifest.description, manifest.tags ?? [], manifest.aliases ?? []) }))
-      .filter(item => item.score > 0)
-      .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-      .map(item => item.id);
+    return this.options.registry.list().filter(manifest => manifest.id !== requested).map(manifest => ({ id: manifest.id, score: this.aliasScore(target, manifest.id, manifest.description, manifest.tags ?? [], manifest.aliases ?? []) })).filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).map(item => item.id);
   }
 
   private aliasScore(target: string, id: string, description: string, tags: string[], aliases: string[]): number {
@@ -147,16 +115,18 @@ export class ConnectChain {
 
   private async persist(state: ConnectChainState): Promise<void> {
     if (!this.options.stateStore) return;
-    await this.options.stateStore.save(state.id, state);
+    await this.options.stateStore.writeValue(state);
   }
 }
 
-function parsePlan(raw: string): CapabilityPlan {
+function parsePlan(raw: string): { goal: string; steps: RawPlanStep[] } {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start < 0 || end < start) throw new Error('Planner returned no JSON object');
-  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as CapabilityPlan;
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as RawPlan;
   if (!parsed || typeof parsed.goal !== 'string' || !Array.isArray(parsed.steps)) throw new Error('Invalid capability plan');
-  return parsed;
+  return { goal: parsed.goal, steps: parsed.steps.filter((step): step is RawPlanStep => isRecord(step)) };
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
