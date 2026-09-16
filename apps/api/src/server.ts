@@ -5,8 +5,8 @@ import { PolicyEngine } from '../../../packages/core/src/policy.js';
 import { CapabilityRouter } from '../../../packages/core/src/router.js';
 import { CapabilityPlanner } from '../../../packages/core/src/planner.js';
 import { CapabilityExecutor } from '../../../packages/core/src/executor.js';
-import { OpenAICompatibleLLM } from '../../../packages/core/src/llm.js';
 import { echoCapability, fileMetadataCapability } from '../../../packages/core/src/builtins.js';
+import { OpenAICompatibleLLM } from '../../../packages/providers/src/openai-compatible.js';
 import { McpHttpClient } from '../../../packages/mcp/src/client.js';
 
 const registry = new CapabilityRegistry();
