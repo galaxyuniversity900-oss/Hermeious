@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export interface Artifact {
@@ -76,10 +76,7 @@ export class ArtifactStore {
 
   deleteContent(id: string): void {
     this.content.delete(id);
-    if (this.root) {
-      const { rmSync } = require('node:fs') as typeof import('node:fs');
-      rmSync(this.pathFor(id), { force: true });
-    }
+    if (this.root) rmSync(this.pathFor(id), { force: true });
   }
 
   private pathFor(id: string): string {
