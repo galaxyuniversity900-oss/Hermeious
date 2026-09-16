@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ArtifactStore } from '../src/platform/artifacts.js';
 import { ApprovalManager } from '../src/platform/approvals.js';
 import { CostController } from '../src/platform/cost.js';
@@ -8,6 +11,7 @@ import { PluginRegistry } from '../src/platform/plugins.js';
 import { assertSafeProviderUrl } from '../src/platform/security.js';
 import { EventBus } from '../src/platform/events.js';
 import { TaskManager } from '../src/platform/tasks.js';
+import { CapabilityGapAnalyzer } from '../src/platform/gap-analyzer.js';
 
 test('artifact lifecycle versions outputs', () => {
   const store = new ArtifactStore();
@@ -15,6 +19,24 @@ test('artifact lifecycle versions outputs', () => {
   const b = store.version(a.id, { metadata: { pages: 10 } });
   assert.equal(b.version, 2);
   assert.equal(store.list().length, 1);
+});
+
+test('artifact content storage calculates checksum and persists to disk', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hermeious-artifacts-'));
+  try {
+    const store = new ArtifactStore(root);
+    const artifact = store.create({ name: 'hello.txt', kind: 'file', mimeType: 'text/plain', uri: 'artifact://hello.txt', metadata: {} });
+    const written = store.putContent(artifact.id, 'hello world');
+    const read = store.readContent(artifact.id);
+    assert.equal(written.size, 11);
+    assert.equal(written.checksum, read.checksum);
+    assert.equal(read.bytes.toString('utf8'), 'hello world');
+    assert.equal(store.get(artifact.id)?.size, 11);
+    assert.equal(store.get(artifact.id)?.checksum, written.checksum);
+    assert.equal(store.hasContent(artifact.id), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('approval manager gates decisions', () => {
@@ -47,6 +69,19 @@ test('plugin registry prevents duplicate capability ids', () => {
 test('provider URL safety rejects untrusted hosts', () => {
   assert.throws(() => assertSafeProviderUrl('https://evil.example/api', ['api.example']));
   assert.equal(assertSafeProviderUrl('https://api.example/v1', ['api.example']).hostname, 'api.example');
+});
+
+test('capability gap analyzer resolves exact and related capabilities', () => {
+  const analyzer = new CapabilityGapAnalyzer({ 'web.browse': ['search.web', 'browser.web'] });
+  const report = analyzer.analyze('research', [
+    { capability: 'search.web' },
+    { capability: 'web.browse' },
+    { capability: 'video.generate' },
+  ], ['search.web', 'browser.web', 'document.pdf']);
+  assert.equal(report.gaps[0].missing, false);
+  assert.equal(report.gaps[1].missing, false);
+  assert.equal(report.gaps[2].missing, true);
+  assert.equal(report.complete, false);
 });
 
 test('TaskManager emits approval and completion lifecycle events', async () => {
