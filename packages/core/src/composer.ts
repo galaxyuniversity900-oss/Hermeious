@@ -5,10 +5,17 @@ export type CapabilityRequirement = {
   constraints?: { quality?: number; latencyMs?: number; costLimit?: number };
 };
 
+export type CapabilityInputBinding = {
+  fromStep: string;
+  outputPath?: string;
+  inputKey: string;
+};
+
 export type CapabilityStep = {
   id: string;
   capability: string;
   input?: Record<string, unknown>;
+  inputBindings?: CapabilityInputBinding[];
   dependsOn: string[];
   optional?: boolean;
 };
@@ -24,7 +31,7 @@ export type CapabilityTemplate = {
   description: string;
   requires: string[];
   produces: string[];
-  steps: Array<{ id: string; capability: string; dependsOn?: string[]; optional?: boolean }>;
+  steps: Array<{ id: string; capability: string; dependsOn?: string[]; optional?: boolean; input?: Record<string, unknown>; inputBindings?: CapabilityInputBinding[] }>;
 };
 
 export class CapabilityComposer {
@@ -45,7 +52,12 @@ export class CapabilityComposer {
     if (templateId && !template) throw new Error(`Unknown capability template: ${templateId}`);
 
     const steps: CapabilityStep[] = template
-      ? template.steps.map(step => ({ ...step, dependsOn: [...(step.dependsOn ?? [])] }))
+      ? template.steps.map(step => ({
+          ...step,
+          dependsOn: [...(step.dependsOn ?? [])],
+          input: step.input ? { ...step.input } : undefined,
+          inputBindings: step.inputBindings ? [...step.inputBindings] : undefined
+        }))
       : requirements.map((req, index) => ({
           id: `step-${index + 1}`,
           capability: req.capability,
@@ -90,6 +102,9 @@ export class CapabilityComposer {
     for (const step of steps) {
       for (const dependency of step.dependsOn) {
         if (!ids.has(dependency)) throw new Error(`Unknown dependency: ${dependency}`);
+      }
+      for (const binding of step.inputBindings ?? []) {
+        if (!ids.has(binding.fromStep)) throw new Error(`Unknown input binding source: ${binding.fromStep}`);
       }
     }
     this.topologicalOrder({ id: 'validation', goal: 'validation', steps });
