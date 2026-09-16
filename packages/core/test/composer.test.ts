@@ -31,8 +31,12 @@ test('supports reusable composite templates', () => {
 
 test('rejects dependency cycles', () => {
   const composer = new CapabilityComposer();
-  assert.throws(() => composer.compose('bad', [
-    { capability: 'a' },
-    { capability: 'b' }
-  ]));
+  composer.registerTemplate({
+    id: 'cycle', description: 'invalid', requires: [], produces: [],
+    steps: [
+      { id: 'a', capability: 'a', dependsOn: ['b'] },
+      { id: 'b', capability: 'b', dependsOn: ['a'] }
+    ]
+  });
+  assert.throws(() => composer.compose('bad', [], 'cycle'), /dependency cycle/);
 });
