@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/packages/core/test/runtime.test.js dist/packages/core/test/replanner.test.js dist/packages/core/test/platform.test.js dist/packages/core/test/intelligence.test.js dist/packages/providers/test/provider.test.js",
+    "test": "npm run build && node --test dist/packages/core/test/runtime.test.js dist/packages/core/test/replanner.test.js dist/packages/core/test/platform.test.js dist/packages/core/test/intelligence.test.js dist/packages/core/test/connect-chain.test.js dist/packages/providers/test/provider.test.js",
     "start": "node dist/apps/api/src/server-complete.js",
     "start:legacy": "node dist/apps/api/src/server.js"
   },

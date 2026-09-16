@@ -6,6 +6,7 @@ export { CapabilityPlanner } from './planner.js';
 export { CapabilityExecutor } from './executor.js';
 export { DependencyAwareExecutor } from './dag-executor.js';
 export { FailureAwareExecutor } from './replanner.js';
+export { ConnectChain } from './connect-chain.js';
 export { CapabilityDiscovery } from './discovery.js';
 export { echoCapability, fileMetadataCapability } from './builtins.js';
 export { fileReadCapability, fileWriteCapability, fileBrowserCapability, httpCapability, realCapabilities } from './real-capabilities.js';
@@ -28,5 +29,6 @@ export type { CapabilityRequirement, CapabilityStep, CapabilityTemplate, Capabil
 export type { InputBinding, ExecutableCapabilityStep, ExecutableCapabilityPlan, DagStepResult, DagExecutionResult, DagExecutorOptions } from './dag-executor.js';
 export type { CapabilityAlternativeResolver, ReplanAttempt, FailureAwareExecutionResult } from './replanner.js';
 export type { EmbeddingProvider, CapabilityRouteConstraints, SemanticRouteOptions, SemanticRouteCandidate } from './semantic-router.js';
+export type { ConnectChainModel, ConnectChainOptions, ConnectChainState, ConnectChainResult } from './connect-chain.js';
 export type { DelegatedTask, Worker } from './delegation.js';
 export * from './platform/index.js';
