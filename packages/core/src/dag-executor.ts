@@ -3,44 +3,14 @@ import type { CapabilityStep, CapabilityPlan } from './composer.js';
 import { CapabilityRegistry } from './registry.js';
 import { PolicyEngine } from './policy.js';
 
-export type InputBinding = {
-  fromStep: string;
-  outputPath?: string;
-  inputKey: string;
-};
-
-export type ExecutableCapabilityStep = CapabilityStep & {
-  inputBindings?: InputBinding[];
-};
-
-export type ExecutableCapabilityPlan = Omit<CapabilityPlan, 'steps'> & {
-  steps: ExecutableCapabilityStep[];
-};
-
-export type DagStepResult = {
-  stepId: string;
-  capability: string;
-  ok: boolean;
-  result?: unknown;
-  error?: string;
-  startedAt: string;
-  finishedAt: string;
-};
-
-export type DagExecutionResult = {
-  planId: string;
-  goal: string;
-  ok: boolean;
-  results: DagStepResult[];
-  outputs: Record<string, unknown>;
-};
+export type InputBinding = { fromStep: string; outputPath?: string; inputKey: string };
+export type ExecutableCapabilityStep = CapabilityStep & { inputBindings?: InputBinding[] };
+export type ExecutableCapabilityPlan = Omit<CapabilityPlan, 'steps'> & { steps: ExecutableCapabilityStep[] };
+export type DagStepResult = { stepId: string; capability: string; ok: boolean; result?: unknown; error?: string; startedAt: string; finishedAt: string };
+export type DagExecutionResult = { planId: string; goal: string; ok: boolean; results: DagStepResult[]; outputs: Record<string, unknown> };
 
 export class DependencyAwareExecutor {
-  constructor(
-    private readonly registry: CapabilityRegistry,
-    private readonly policy: PolicyEngine,
-    private readonly concurrency = 4
-  ) {
+  constructor(private readonly registry: CapabilityRegistry, private readonly policy: PolicyEngine, private readonly concurrency = 4) {
     if (concurrency < 1) throw new Error('concurrency must be at least 1');
   }
 
@@ -54,29 +24,25 @@ export class DependencyAwareExecutor {
       const ready = [...pending.values()].filter(step => step.dependsOn.every(id => completed.has(id)));
       if (!ready.length) throw new Error('Capability plan cannot make progress: unresolved dependency or cycle');
 
-      const batch = ready.slice(0, this.concurrency);
-      const batchResults = await Promise.all(batch.map(step => this.runStep(step, completed, outputs, approved)));
+      const blocked = ready.filter(step => step.dependsOn.some(id => !completed.get(id)!.ok));
+      for (const step of blocked) {
+        const failedDependencies = step.dependsOn.filter(id => !completed.get(id)!.ok);
+        completed.set(step.id, {
+          stepId: step.id, capability: step.capability, ok: false,
+          error: `Skipped because dependency failed: ${failedDependencies.join(', ')}`,
+          startedAt: new Date().toISOString(), finishedAt: new Date().toISOString()
+        });
+        pending.delete(step.id);
+      }
+
+      const runnable = ready.filter(step => !blocked.includes(step));
+      if (!runnable.length) continue;
+      const batch = runnable.slice(0, this.concurrency);
+      const batchResults = await Promise.all(batch.map(step => this.runStep(step, outputs, approved)));
       for (const result of batchResults) {
         completed.set(result.stepId, result);
         pending.delete(result.stepId);
         if (result.ok) outputs[result.stepId] = result.result;
-      }
-
-      const failed = batchResults.filter(result => !result.ok && !pending.get(result.stepId)?.optional);
-      if (failed.length) {
-        for (const step of [...pending.values()]) {
-          if (step.dependsOn.some(id => failed.some(result => result.stepId === id))) {
-            pending.delete(step.id);
-            completed.set(step.id, {
-              stepId: step.id,
-              capability: step.capability,
-              ok: false,
-              error: `Skipped because dependency failed: ${step.dependsOn.join(', ')}`,
-              startedAt: new Date().toISOString(),
-              finishedAt: new Date().toISOString()
-            });
-          }
-        }
       }
     }
 
@@ -84,32 +50,16 @@ export class DependencyAwareExecutor {
     return { planId: plan.id, goal: plan.goal, ok: results.every(result => result.ok), results, outputs };
   }
 
-  private async runStep(
-    step: ExecutableCapabilityStep,
-    completed: Map<string, DagStepResult>,
-    outputs: Record<string, unknown>,
-    approved: boolean
-  ): Promise<DagStepResult> {
+  private async runStep(step: ExecutableCapabilityStep, outputs: Record<string, unknown>, approved: boolean): Promise<DagStepResult> {
     const startedAt = new Date().toISOString();
     try {
       const input = this.resolveInput(step, outputs);
-      const stepApproved = approved;
-      const decision = this.policy.check(this.registry, step.capability, stepApproved);
+      const decision = this.policy.check(this.registry, step.capability, approved);
       if (!decision.allowed) throw new Error(decision.reason);
-      const result = await this.registry.execute(step.capability, input, {
-        requestId: randomUUID(),
-        approved: stepApproved
-      });
+      const result = await this.registry.execute(step.capability, input, { requestId: randomUUID(), approved });
       return { stepId: step.id, capability: step.capability, ok: true, result, startedAt, finishedAt: new Date().toISOString() };
     } catch (error) {
-      return {
-        stepId: step.id,
-        capability: step.capability,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        startedAt,
-        finishedAt: new Date().toISOString()
-      };
+      return { stepId: step.id, capability: step.capability, ok: false, error: error instanceof Error ? error.message : String(error), startedAt, finishedAt: new Date().toISOString() };
     }
   }
 
@@ -118,6 +68,7 @@ export class DependencyAwareExecutor {
     for (const binding of step.inputBindings ?? []) {
       if (!(binding.fromStep in outputs)) throw new Error(`Missing output from dependency: ${binding.fromStep}`);
       const source = binding.outputPath ? getPath(outputs[binding.fromStep], binding.outputPath) : outputs[binding.fromStep];
+      if (source === undefined) throw new Error(`Output path not found: ${binding.fromStep}.${binding.outputPath ?? ''}`);
       input[binding.inputKey] = source;
     }
     return input;
@@ -130,29 +81,20 @@ export class DependencyAwareExecutor {
       ids.add(step.id);
     }
     for (const step of plan.steps) {
-      for (const dependency of step.dependsOn) {
-        if (!ids.has(dependency)) throw new Error(`Unknown dependency: ${dependency}`);
-      }
-      for (const binding of step.inputBindings ?? []) {
-        if (!ids.has(binding.fromStep)) throw new Error(`Unknown input binding source: ${binding.fromStep}`);
-      }
+      for (const dependency of step.dependsOn) if (!ids.has(dependency)) throw new Error(`Unknown dependency: ${dependency}`);
+      for (const binding of step.inputBindings ?? []) if (!ids.has(binding.fromStep)) throw new Error(`Unknown input binding source: ${binding.fromStep}`);
     }
     const indegree = new Map(plan.steps.map(step => [step.id, step.dependsOn.length]));
     const outgoing = new Map<string, string[]>();
     for (const step of plan.steps) for (const dependency of step.dependsOn) {
       const list = outgoing.get(dependency) ?? [];
-      list.push(step.id);
-      outgoing.set(dependency, list);
+      list.push(step.id); outgoing.set(dependency, list);
     }
     const queue = [...plan.steps.filter(step => indegree.get(step.id) === 0).map(step => step.id)];
     let visited = 0;
     while (queue.length) {
-      const id = queue.shift()!;
-      visited++;
-      for (const next of outgoing.get(id) ?? []) {
-        indegree.set(next, indegree.get(next)! - 1);
-        if (indegree.get(next) === 0) queue.push(next);
-      }
+      const id = queue.shift()!; visited++;
+      for (const next of outgoing.get(id) ?? []) { indegree.set(next, indegree.get(next)! - 1); if (indegree.get(next) === 0) queue.push(next); }
     }
     if (visited !== plan.steps.length) throw new Error('Capability plan contains a dependency cycle');
   }
