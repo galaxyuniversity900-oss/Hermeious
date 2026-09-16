@@ -7,6 +7,7 @@ export { DependencyAwareExecutor } from './dag-executor.js';
 export { FailureAwareExecutor } from './replanner.js';
 export { CapabilityDiscovery } from './discovery.js';
 export { echoCapability, fileMetadataCapability } from './builtins.js';
+export { fileReadCapability, fileWriteCapability, fileBrowserCapability, httpCapability, realCapabilities } from './real-capabilities.js';
 export { CapabilityComposer } from './composer.js';
 export { defaultCapabilityTemplates } from './templates.js';
 export type { CapabilityHandler, CapabilityManifest, CapabilityContext, CapabilityPlan, CapabilityPlanStep, CapabilityRisk } from './types.js';
