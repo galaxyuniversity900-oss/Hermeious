@@ -5,7 +5,7 @@ import { PolicyEngine } from '../../../packages/core/src/policy.js';
 import { CapabilityRouter } from '../../../packages/core/src/router.js';
 import { CapabilityPlanner } from '../../../packages/core/src/planner.js';
 import { CapabilityExecutor } from '../../../packages/core/src/executor.js';
-import { CapabilityComposer, DependencyAwareExecutor, FailureAwareExecutor, defaultCapabilityTemplates } from '../../../packages/core/src/index.js';
+import { CapabilityComposer, DependencyAwareExecutor, FailureAwareExecutor, defaultCapabilityTemplates, realCapabilities } from '../../../packages/core/src/index.js';
 import type { ExecutableCapabilityPlan } from '../../../packages/core/src/index.js';
 import { echoCapability, fileMetadataCapability } from '../../../packages/core/src/builtins.js';
 import { OpenAICompatibleLLM } from '../../../packages/providers/src/openai-compatible.js';
@@ -15,6 +15,7 @@ import { McpHttpClient } from '../../../packages/mcp/src/client.js';
 const registry = new CapabilityRegistry();
 registry.register(echoCapability);
 registry.register(fileMetadataCapability);
+registry.registerMany(realCapabilities);
 const maxRisk = ['low', 'medium', 'high', 'critical'].includes(process.env.MAX_RISK ?? '') ? process.env.MAX_RISK as 'low' | 'medium' | 'high' | 'critical' : 'medium';
 const policy = new PolicyEngine(maxRisk);
 const router = new CapabilityRouter(registry);
@@ -23,6 +24,19 @@ const composer = new CapabilityComposer();
 for (const template of defaultCapabilityTemplates) composer.registerTemplate(template);
 const dagExecutor = new DependencyAwareExecutor(registry, policy, Number(process.env.DAG_CONCURRENCY ?? 4));
 const providerResolver = new ProviderResolver();
+for (const capability of realCapabilities) {
+  if (capability.manifest.provider === 'http') {
+    const endpointEnv = capability.manifest.id === 'search.web' ? 'HERMEIOUS_SEARCH_URL' :
+      capability.manifest.id === 'code.execute' ? 'HERMEIOUS_CODE_EXECUTOR_URL' :
+      capability.manifest.id === 'document.pdf' ? 'HERMEIOUS_PDF_URL' :
+      capability.manifest.id === 'document.docx' ? 'HERMEIOUS_DOCX_URL' :
+      capability.manifest.id === 'document.xlsx' ? 'HERMEIOUS_XLSX_URL' :
+      capability.manifest.id === 'image.generate' ? 'HERMEIOUS_IMAGE_URL' : 'HERMEIOUS_VIDEO_URL';
+    if (process.env[endpointEnv]) providerResolver.register({ providerId: `env:${endpointEnv}`, logicalCapability: capability.manifest.id, capabilityId: capability.manifest.id, kind: 'http', endpoint: process.env[endpointEnv], qualityScore: 0.7, costScore: 0.5 });
+  } else {
+    providerResolver.register({ providerId: 'local', logicalCapability: capability.manifest.id, capabilityId: capability.manifest.id, kind: 'local', qualityScore: 0.9, costScore: 0.1 });
+  }
+}
 const fallbackExecutor = new FallbackExecutor(providerResolver);
 const resilientExecutor = new FailureAwareExecutor(
   registry,
@@ -59,7 +73,7 @@ function assertMcpUrl(raw: string): void {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size, providers: providerResolver.list().length, discoveryCandidates: discovery.list().length, templates: composer.listTemplates().length, dagExecutor: true, resilientExecutor: true });
+    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size, providers: providerResolver.list().length, discoveryCandidates: discovery.list().length, templates: composer.listTemplates().length, dagExecutor: true, resilientExecutor: true, realCapabilities: realCapabilities.map(c => c.manifest.id) });
     if (req.method === 'GET' && url.pathname === '/capabilities') return json(res, 200, { capabilities: registry.list() });
     if (req.method === 'GET' && url.pathname === '/route') return json(res, 200, { candidates: router.route(url.searchParams.get('goal') ?? '') });
     if (req.method === 'GET' && url.pathname === '/mcp/servers') return json(res, 200, { servers: [...mcpServers.keys()] });
@@ -75,16 +89,12 @@ const server = createServer(async (req, res) => {
       const plan = composer.compose(body.goal, body.requirements ?? [], body.templateId);
       return json(res, 200, { ok: true, plan, executionOrder: composer.topologicalOrder(plan).map(step => step.id) });
     }
-
     if (req.method === 'POST' && url.pathname === '/composer/execute') {
       const body = await readJson(req) as { plan?: ExecutableCapabilityPlan; approved?: boolean; resilient?: boolean };
       if (!body.plan || !Array.isArray(body.plan.steps)) return json(res, 400, { error: 'plan with steps is required' });
-      const result = body.resilient === false
-        ? await dagExecutor.execute(body.plan, body.approved === true)
-        : await resilientExecutor.execute(body.plan, body.approved === true);
+      const result = body.resilient === false ? await dagExecutor.execute(body.plan, body.approved === true) : await resilientExecutor.execute(body.plan, body.approved === true);
       return json(res, result.ok ? 200 : 502, result);
     }
-
     if (req.method === 'POST' && url.pathname === '/mcp/connect') {
       const body = await readJson(req) as { name?: string; url?: string; headers?: Record<string, string> };
       if (!body.name || !body.url) return json(res, 400, { error: 'name and url are required' });
@@ -97,7 +107,6 @@ const server = createServer(async (req, res) => {
       mcpServers.set(body.name, client);
       return json(res, 200, { ok: true, server: body.name, registered: handlers.map(handler => handler.manifest.id) });
     }
-
     if (req.method === 'POST' && url.pathname === '/providers/register') {
       const body = await readJson(req);
       if (!body.providerId || !body.logicalCapability || !body.capabilityId || !body.kind) return json(res, 400, { error: 'providerId, logicalCapability, capabilityId and kind are required' });
