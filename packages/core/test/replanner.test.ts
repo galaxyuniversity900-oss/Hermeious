@@ -9,7 +9,7 @@ const manifest = (id: string) => ({
   id,
   version: '1.0.0',
   description: id,
-  interfaces: ['local'] as const,
+  interfaces: ['local'],
   inputSchema: {},
   outputSchema: {},
   permissions: [],
@@ -42,7 +42,7 @@ test('failure-aware executor replaces a failed capability and completes the grap
   const result = await executor.execute(plan);
   assert.equal(result.ok, true);
   assert.equal(result.replanned, true);
-  assert.equal(result.outputs.produce && (result.outputs.produce as { value: string }).value, 'ok');
+  assert.equal((result.outputs.produce as { value: string }).value, 'ok');
   assert.deepEqual(result.outputs.consume, { received: 'ok' });
   assert.equal(result.attempts[0]?.replacements[0]?.to, 'fallback');
 });
