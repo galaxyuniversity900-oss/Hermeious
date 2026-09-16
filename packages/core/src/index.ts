@@ -5,4 +5,7 @@ export { CapabilityPlanner } from './planner.js';
 export { CapabilityExecutor } from './executor.js';
 export { CapabilityDiscovery } from './discovery.js';
 export { echoCapability, fileMetadataCapability } from './builtins.js';
+export { CapabilityComposer } from './composer.js';
+export { defaultCapabilityTemplates } from './templates.js';
 export type { CapabilityHandler, CapabilityManifest, CapabilityContext, CapabilityPlan, CapabilityPlanStep, CapabilityRisk } from './types.js';
+export type { CapabilityRequirement, CapabilityStep, CapabilityTemplate } from './composer.js';
