@@ -1,0 +1,15 @@
+export { CapabilityRegistry } from './registry.js';
+export { PolicyEngine } from './policy.js';
+export { CapabilityRouter } from './router.js';
+export { CapabilityPlanner } from './planner.js';
+export { CapabilityExecutor } from './executor.js';
+export { DependencyAwareExecutor } from './dag-executor.js';
+export { FailureAwareExecutor } from './replanner.js';
+export { CapabilityDiscovery } from './discovery.js';
+export { echoCapability, fileMetadataCapability } from './builtins.js';
+export { CapabilityComposer } from './composer.js';
+export { defaultCapabilityTemplates } from './templates.js';
+export type { CapabilityHandler, CapabilityManifest, CapabilityContext, CapabilityPlan, CapabilityPlanStep, CapabilityRisk } from './types.js';
+export type { CapabilityRequirement, CapabilityStep, CapabilityTemplate, CapabilityInputBinding } from './composer.js';
+export type { InputBinding, ExecutableCapabilityStep, ExecutableCapabilityPlan, DagStepResult, DagExecutionResult } from './dag-executor.js';
+export type { CapabilityAlternativeResolver, ReplanAttempt, FailureAwareExecutionResult } from './replanner.js';
