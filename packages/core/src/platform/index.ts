@@ -7,3 +7,4 @@ export * from './cost.js';
 export * from './plugins.js';
 export * from './security.js';
 export * from './tasks.js';
+export * from './gap-analyzer.js';
