@@ -5,7 +5,8 @@ import { PolicyEngine } from '../../../packages/core/src/policy.js';
 import { CapabilityRouter } from '../../../packages/core/src/router.js';
 import { CapabilityPlanner } from '../../../packages/core/src/planner.js';
 import { CapabilityExecutor } from '../../../packages/core/src/executor.js';
-import { CapabilityComposer, defaultCapabilityTemplates } from '../../../packages/core/src/index.js';
+import { CapabilityComposer, DependencyAwareExecutor, defaultCapabilityTemplates } from '../../../packages/core/src/index.js';
+import type { ExecutableCapabilityPlan } from '../../../packages/core/src/index.js';
 import { echoCapability, fileMetadataCapability } from '../../../packages/core/src/builtins.js';
 import { OpenAICompatibleLLM } from '../../../packages/providers/src/openai-compatible.js';
 import { CapabilityDiscovery, FallbackExecutor, ProviderResolver } from '../../../packages/providers/src/index.js';
@@ -20,6 +21,7 @@ const router = new CapabilityRouter(registry);
 const executor = new CapabilityExecutor(registry, policy);
 const composer = new CapabilityComposer();
 for (const template of defaultCapabilityTemplates) composer.registerTemplate(template);
+const dagExecutor = new DependencyAwareExecutor(registry, policy, Number(process.env.DAG_CONCURRENCY ?? 4));
 const providerResolver = new ProviderResolver();
 const fallbackExecutor = new FallbackExecutor(providerResolver);
 const discovery = new CapabilityDiscovery();
@@ -50,7 +52,7 @@ function assertMcpUrl(raw: string): void {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size, providers: providerResolver.list().length, discoveryCandidates: discovery.list().length, templates: composer.listTemplates().length });
+    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size, providers: providerResolver.list().length, discoveryCandidates: discovery.list().length, templates: composer.listTemplates().length, dagExecutor: true });
     if (req.method === 'GET' && url.pathname === '/capabilities') return json(res, 200, { capabilities: registry.list() });
     if (req.method === 'GET' && url.pathname === '/route') return json(res, 200, { candidates: router.route(url.searchParams.get('goal') ?? '') });
     if (req.method === 'GET' && url.pathname === '/mcp/servers') return json(res, 200, { servers: [...mcpServers.keys()] });
@@ -65,6 +67,13 @@ const server = createServer(async (req, res) => {
       if (!body.goal) return json(res, 400, { error: 'goal is required' });
       const plan = composer.compose(body.goal, body.requirements ?? [], body.templateId);
       return json(res, 200, { ok: true, plan, executionOrder: composer.topologicalOrder(plan).map(step => step.id) });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/composer/execute') {
+      const body = await readJson(req) as { plan?: ExecutableCapabilityPlan; approved?: boolean };
+      if (!body.plan || !Array.isArray(body.plan.steps)) return json(res, 400, { error: 'plan with steps is required' });
+      const result = await dagExecutor.execute(body.plan, body.approved === true);
+      return json(res, result.ok ? 200 : 502, result);
     }
 
     if (req.method === 'POST' && url.pathname === '/mcp/connect') {
