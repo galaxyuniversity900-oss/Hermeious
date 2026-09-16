@@ -7,6 +7,7 @@ import { CapabilityPlanner } from '../../../packages/core/src/planner.js';
 import { CapabilityExecutor } from '../../../packages/core/src/executor.js';
 import { echoCapability, fileMetadataCapability } from '../../../packages/core/src/builtins.js';
 import { OpenAICompatibleLLM } from '../../../packages/providers/src/openai-compatible.js';
+import { CapabilityDiscovery, FallbackExecutor, ProviderResolver } from '../../../packages/providers/src/index.js';
 import { McpHttpClient } from '../../../packages/mcp/src/client.js';
 
 const registry = new CapabilityRegistry();
@@ -16,6 +17,9 @@ const maxRisk = ['low', 'medium', 'high', 'critical'].includes(process.env.MAX_R
 const policy = new PolicyEngine(maxRisk);
 const router = new CapabilityRouter(registry);
 const executor = new CapabilityExecutor(registry, policy);
+const providerResolver = new ProviderResolver();
+const fallbackExecutor = new FallbackExecutor(providerResolver);
+const discovery = new CapabilityDiscovery();
 const mcpServers = new Map<string, McpHttpClient>();
 const port = Number(process.env.PORT ?? 8787);
 
@@ -47,11 +51,23 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
     if (req.method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size });
+      return json(res, 200, {
+        ok: true,
+        service: 'hermeious',
+        planner: Boolean(planner),
+        capabilities: registry.list().length,
+        mcpServers: mcpServers.size,
+        providers: providerResolver.list().length,
+        discoveryCandidates: discovery.list().length
+      });
     }
     if (req.method === 'GET' && url.pathname === '/capabilities') return json(res, 200, { capabilities: registry.list() });
     if (req.method === 'GET' && url.pathname === '/route') return json(res, 200, { candidates: router.route(url.searchParams.get('goal') ?? '') });
     if (req.method === 'GET' && url.pathname === '/mcp/servers') return json(res, 200, { servers: [...mcpServers.keys()] });
+    if (req.method === 'GET' && url.pathname === '/providers') return json(res, 200, { providers: providerResolver.list() });
+    if (req.method === 'GET' && url.pathname === '/providers/resolve') return json(res, 200, { candidates: providerResolver.resolve(url.searchParams.get('capability') ?? '') });
+    if (req.method === 'GET' && url.pathname === '/providers/performance') return json(res, 200, { performance: providerResolver.performance.snapshot() });
+    if (req.method === 'GET' && url.pathname === '/discovery') return json(res, 200, { candidates: discovery.list() });
 
     if (req.method === 'POST' && url.pathname === '/mcp/connect') {
       const body = await readJson(req) as { name?: string; url?: string; headers?: Record<string, string> };
@@ -61,8 +77,45 @@ const server = createServer(async (req, res) => {
       await client.initialize();
       const handlers = await client.toHandlers();
       registry.registerMany(handlers);
+      for (const handler of handlers) {
+        providerResolver.register({
+          providerId: `mcp:${body.name}`,
+          logicalCapability: handler.manifest.id,
+          capabilityId: handler.manifest.id,
+          kind: 'mcp',
+          endpoint: body.url,
+          qualityScore: 0.75,
+          costScore: 0.25
+        });
+      }
       mcpServers.set(body.name, client);
       return json(res, 200, { ok: true, server: body.name, registered: handlers.map(handler => handler.manifest.id) });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/providers/register') {
+      const body = await readJson(req);
+      if (!body.providerId || !body.logicalCapability || !body.capabilityId || !body.kind) {
+        return json(res, 400, { error: 'providerId, logicalCapability, capabilityId and kind are required' });
+      }
+      providerResolver.register(body);
+      return json(res, 200, { ok: true, providers: providerResolver.list(body.logicalCapability) });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/discovery/register') {
+      const body = await readJson(req);
+      const candidate = CapabilityDiscovery.fromManifest(body.manifest ?? body, body.source ?? 'api', body.trust ?? 'review');
+      discovery.register(candidate);
+      if (candidate.trust === 'trusted') providerResolver.register(candidate.provider);
+      return json(res, 200, { ok: true, candidate });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/discovery/trust') {
+      const body = await readJson(req) as { providerId?: string; capability?: string };
+      if (!body.providerId || !body.capability) return json(res, 400, { error: 'providerId and capability are required' });
+      discovery.trust(body.providerId, body.capability);
+      const candidate = discovery.discover(body.capability).find(item => item.provider.providerId === body.providerId);
+      if (candidate) providerResolver.register(candidate.provider);
+      return json(res, 200, { ok: true, candidate });
     }
 
     if (req.method === 'POST' && url.pathname === '/capabilities/execute') {
@@ -73,6 +126,18 @@ const server = createServer(async (req, res) => {
       if (!decision.allowed) return json(res, 403, { error: decision.reason });
       const result = await registry.execute(body.capability, body.input ?? {}, { requestId: randomUUID(), approved });
       return json(res, 200, { ok: true, result });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/capabilities/execute-logical') {
+      const body = await readJson(req) as { capability?: string; input?: Record<string, unknown>; approved?: boolean };
+      if (!body.capability) return json(res, 400, { error: 'capability is required' });
+      const approved = body.approved === true;
+      const result = await fallbackExecutor.execute(body.capability, body.input ?? {}, async (capabilityId, input) => {
+        const decision = policy.check(registry, capabilityId, approved);
+        if (!decision.allowed) throw new Error(decision.reason);
+        return registry.execute(capabilityId, input, { requestId: randomUUID(), approved });
+      });
+      return json(res, result.ok ? 200 : 502, result);
     }
 
     if (req.method === 'POST' && url.pathname === '/plan') {
