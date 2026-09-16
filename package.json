@@ -1,11 +1,11 @@
 {
   "name": "hermeious",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/packages/core/test/runtime.test.js",
+    "test": "npm run build && node --test dist/packages/core/test/runtime.test.js dist/packages/providers/test/provider.test.js",
     "start": "node dist/apps/api/src/server.js"
   },
   "devDependencies": {
