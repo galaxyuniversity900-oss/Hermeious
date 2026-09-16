@@ -52,7 +52,7 @@ export class McpHttpClient {
     await this.rpc('initialize', {
       protocolVersion: '2025-06-18',
       capabilities: {},
-      clientInfo: { name: 'hermeious', version: '0.1.0' }
+      clientInfo: { name: 'hermeious', version: '0.3.0' }
     });
     await this.rpc('notifications/initialized', {});
   }
@@ -69,6 +69,7 @@ export class McpHttpClient {
 
   async toHandlers(): Promise<CapabilityHandler[]> {
     const tools = await this.listTools();
+    const client = this;
     return tools.map((tool: any): CapabilityHandler => {
       const id = `mcp.${this.config.name}.${String(tool.name)}`;
       const manifest: CapabilityManifest = {
@@ -81,7 +82,7 @@ export class McpHttpClient {
       return {
         manifest,
         async execute(input: Record<string, unknown>, _context: CapabilityContext) {
-          return this.callTool(String(tool.name), input);
+          return client.callTool(String(tool.name), input);
         }
       };
     });
