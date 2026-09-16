@@ -1,39 +1,21 @@
-export type Risk = 'low' | 'medium' | 'high' | 'critical';
-export type InterfaceType = 'local' | 'http' | 'mcp';
-
-export interface CapabilityManifest {
-  id: string;
-  version: string;
-  description: string;
-  interfaces: InterfaceType[];
-  inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
-  permissions: string[];
-  risk: Risk;
-  provider?: string;
-}
-
-export interface CapabilityContext {
-  requestId: string;
-  approved: boolean;
-  signal?: AbortSignal;
-}
-
-export interface CapabilityHandler {
-  manifest: CapabilityManifest;
-  execute(input: Record<string, unknown>, context: CapabilityContext): Promise<unknown>;
-}
+import type { CapabilityContext, CapabilityHandler, CapabilityManifest } from './types.js';
 
 export class CapabilityRegistry {
   private readonly handlers = new Map<string, CapabilityHandler>();
 
-  register(handler: CapabilityHandler): void {
-    if (this.handlers.has(handler.manifest.id)) throw new Error(`Capability already registered: ${handler.manifest.id}`);
+  register(handler: CapabilityHandler, options: { replace?: boolean } = {}): void {
+    if (this.handlers.has(handler.manifest.id) && !options.replace) {
+      throw new Error(`Capability already registered: ${handler.manifest.id}`);
+    }
     this.handlers.set(handler.manifest.id, handler);
   }
 
+  registerMany(handlers: CapabilityHandler[]): void {
+    for (const handler of handlers) this.register(handler);
+  }
+
   get(id: string): CapabilityHandler | undefined { return this.handlers.get(id); }
-  list(): CapabilityManifest[] { return [...this.handlers.values()].map(h => h.manifest); }
+  list(): CapabilityManifest[] { return [...this.handlers.values()].map(handler => handler.manifest); }
 
   async execute(id: string, input: Record<string, unknown>, context: CapabilityContext): Promise<unknown> {
     const handler = this.get(id);
