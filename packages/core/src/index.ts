@@ -14,3 +14,4 @@ export type { CapabilityHandler, CapabilityManifest, CapabilityContext, Capabili
 export type { CapabilityRequirement, CapabilityStep, CapabilityTemplate, CapabilityInputBinding } from './composer.js';
 export type { InputBinding, ExecutableCapabilityStep, ExecutableCapabilityPlan, DagStepResult, DagExecutionResult } from './dag-executor.js';
 export type { CapabilityAlternativeResolver, ReplanAttempt, FailureAwareExecutionResult } from './replanner.js';
+export * from './platform/index.js';
