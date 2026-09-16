@@ -7,6 +7,7 @@ import { CapabilityPlanner } from '../../../packages/core/src/planner.js';
 import { CapabilityExecutor } from '../../../packages/core/src/executor.js';
 import { CapabilityComposer, DependencyAwareExecutor, FailureAwareExecutor, defaultCapabilityTemplates, realCapabilities } from '../../../packages/core/src/index.js';
 import type { ExecutableCapabilityPlan } from '../../../packages/core/src/index.js';
+import { ApprovalManager, ArtifactStore, EventBus, TaskManager } from '../../../packages/core/src/platform/index.js';
 import { echoCapability, fileMetadataCapability } from '../../../packages/core/src/builtins.js';
 import { OpenAICompatibleLLM } from '../../../packages/providers/src/openai-compatible.js';
 import { CapabilityDiscovery, FallbackExecutor, ProviderResolver } from '../../../packages/providers/src/index.js';
@@ -47,6 +48,10 @@ const resilientExecutor = new FailureAwareExecutor(
 );
 const discovery = new CapabilityDiscovery();
 const mcpServers = new Map<string, McpHttpClient>();
+const approvals = new ApprovalManager();
+const artifacts = new ArtifactStore();
+const eventBus = new EventBus();
+const taskManager = new TaskManager(dagExecutor, approvals, artifacts, eventBus);
 const port = Number(process.env.PORT ?? 8787);
 
 const llm = process.env.LLM_API_KEY && process.env.LLM_BASE_URL && process.env.LLM_MODEL
@@ -55,7 +60,7 @@ const llm = process.env.LLM_API_KEY && process.env.LLM_BASE_URL && process.env.L
 const planner = llm ? new CapabilityPlanner(llm, router) : undefined;
 
 function json(res: import('node:http').ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
 }
 async function readJson(req: import('node:http').IncomingMessage): Promise<any> {
@@ -73,7 +78,11 @@ function assertMcpUrl(raw: string): void {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size, providers: providerResolver.list().length, discoveryCandidates: discovery.list().length, templates: composer.listTemplates().length, dagExecutor: true, resilientExecutor: true, realCapabilities: realCapabilities.map(c => c.manifest.id) });
+    if (req.method === 'GET' && url.pathname === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hermeious Control Plane</title><style>body{font:15px system-ui;margin:0;background:#0b1020;color:#e8edf7}main{max-width:1100px;margin:auto;padding:24px}button{padding:9px 14px;border:0;border-radius:8px;cursor:pointer}pre{background:#11182b;padding:14px;border-radius:10px;overflow:auto}.card{background:#11182b;border:1px solid #25304a;padding:16px;border-radius:12px;margin:12px 0}.ok{color:#78e08f}.muted{color:#9aa8c0}</style></head><body><main><h1>Hermeious Control Plane</h1><p class="muted">Capability orchestration · approvals · tasks · live events · artifacts</p><div class="card"><button onclick="load()">Refresh</button> <button onclick="loadApprovals()">Approvals</button> <button onclick="loadArtifacts()">Artifacts</button></div><div class="card"><h2>Tasks</h2><div id="tasks">Loading…</div></div><div class="card"><h2>Live event stream</h2><pre id="events">Select a task to stream events.</pre></div><script>let es;async function api(p,o){const r=await fetch(p,o);return r.json()}async function load(){const x=await api('/tasks');document.querySelector('#tasks').innerHTML=x.tasks.map(t=>'<div style="margin:10px 0"><b>'+t.goal+'</b> — '+t.status+' <button onclick="watch(\\''+t.id+'\\')">Watch</button>'+(t.status==='paused'?'<button onclick="approve(\\''+t.id+'\\')">Approve</button>':'')+'</div>').join('')||'No tasks'}async function approve(id){await api('/tasks/'+id+'/approve',{method:'POST'});load();watch(id)}async function watch(id){if(es)es.close();document.querySelector('#events').textContent='';es=new EventSource('/tasks/'+id+'/events');es.onmessage=e=>{document.querySelector('#events').textContent+=e.data+'\\n';load()}}async function loadApprovals(){document.querySelector('#events').textContent=JSON.stringify(await api('/approvals'),null,2)}async function loadArtifacts(){document.querySelector('#events').textContent=JSON.stringify(await api('/artifacts'),null,2)}load();</script></main></body></html>`);
+    }
+    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, service: 'hermeious', planner: Boolean(planner), capabilities: registry.list().length, mcpServers: mcpServers.size, providers: providerResolver.list().length, discoveryCandidates: discovery.list().length, templates: composer.listTemplates().length, tasks: taskManager.list().length, approvals: approvals.list().length, artifacts: artifacts.list().length, dagExecutor: true, resilientExecutor: true, realCapabilities: realCapabilities.map(c => c.manifest.id) });
     if (req.method === 'GET' && url.pathname === '/capabilities') return json(res, 200, { capabilities: registry.list() });
     if (req.method === 'GET' && url.pathname === '/route') return json(res, 200, { candidates: router.route(url.searchParams.get('goal') ?? '') });
     if (req.method === 'GET' && url.pathname === '/mcp/servers') return json(res, 200, { servers: [...mcpServers.keys()] });
@@ -82,7 +91,41 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/providers/performance') return json(res, 200, { performance: providerResolver.performance.snapshot() });
     if (req.method === 'GET' && url.pathname === '/discovery') return json(res, 200, { candidates: discovery.list() });
     if (req.method === 'GET' && url.pathname === '/composer/templates') return json(res, 200, { templates: composer.listTemplates() });
+    if (req.method === 'GET' && url.pathname === '/tasks') return json(res, 200, { tasks: taskManager.list() });
+    if (req.method === 'GET' && url.pathname.startsWith('/tasks/') && url.pathname.endsWith('/events')) {
+      const taskId = url.pathname.split('/')[2];
+      if (!taskManager.get(taskId)) return json(res, 404, { error: 'task_not_found' });
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      for (const event of taskManager.events(taskId)) res.write(`data: ${JSON.stringify(event)}\\n\\n`);
+      const unsubscribe = taskManager.subscribe(taskId, event => res.write(`data: ${JSON.stringify(event)}\\n\\n`));
+      const heartbeat = setInterval(() => res.write(': ping\\n\\n'), 15000);
+      req.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
+      return;
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/tasks/')) {
+      const task = taskManager.get(url.pathname.split('/')[2]);
+      return task ? json(res, 200, { task, events: taskManager.events(task.id), artifacts: taskManager.artifactsFor(task.id) }) : json(res, 404, { error: 'task_not_found' });
+    }
+    if (req.method === 'GET' && url.pathname === '/approvals') return json(res, 200, { approvals: approvals.list() });
+    if (req.method === 'GET' && url.pathname === '/artifacts') return json(res, 200, { artifacts: artifacts.list() });
+    if (req.method === 'GET' && url.pathname.startsWith('/artifacts/')) {
+      const artifact = artifacts.get(url.pathname.split('/')[2]);
+      return artifact ? json(res, 200, { artifact }) : json(res, 404, { error: 'artifact_not_found' });
+    }
 
+    if (req.method === 'POST' && url.pathname === '/tasks') {
+      const body = await readJson(req) as { plan?: ExecutableCapabilityPlan; approved?: boolean };
+      if (!body.plan || !Array.isArray(body.plan.steps)) return json(res, 400, { error: 'plan with steps is required' });
+      return json(res, 202, { ok: true, task: taskManager.create(body.plan, body.approved === true) });
+    }
+    if (req.method === 'POST' && url.pathname.startsWith('/tasks/') && url.pathname.endsWith('/approve')) {
+      const id = url.pathname.split('/')[2];
+      return json(res, 202, { ok: true, task: await taskManager.approve(id) });
+    }
+    if (req.method === 'POST' && url.pathname.startsWith('/tasks/') && url.pathname.endsWith('/cancel')) {
+      const id = url.pathname.split('/')[2];
+      return json(res, 200, { ok: true, task: taskManager.cancel(id) });
+    }
     if (req.method === 'POST' && url.pathname === '/composer/compose') {
       const body = await readJson(req) as { goal?: string; requirements?: Array<{ capability: string; requiredInputs?: string[]; expectedOutputs?: string[] }>; templateId?: string };
       if (!body.goal) return json(res, 400, { error: 'goal is required' });
