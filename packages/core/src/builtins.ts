@@ -1,12 +1,12 @@
-import type { CapabilityHandler } from './registry.js';
+import type { CapabilityHandler } from './types.js';
 
 export const echoCapability: CapabilityHandler = {
-  manifest: { id: 'system.echo', version: '1.0.0', provider: 'builtin', description: 'Return the supplied payload unchanged.', interfaces: ['local'], inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, permissions: [], risk: 'low' },
+  manifest: { id: 'system.echo', version: '1.0.0', provider: 'builtin', description: 'Return the supplied payload unchanged.', interfaces: ['local'], inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, permissions: [], risk: 'low', tags: ['echo', 'test', 'utility'] },
   async execute(input) { return input; }
 };
 
 export const fileMetadataCapability: CapabilityHandler = {
-  manifest: { id: 'file.metadata', version: '1.0.0', provider: 'builtin', description: 'Read metadata for a caller-supplied file path.', interfaces: ['local'], inputSchema: { path: { type: 'string' } }, outputSchema: { type: 'object' }, permissions: ['filesystem.read'], risk: 'medium' },
+  manifest: { id: 'file.metadata', version: '1.0.0', provider: 'builtin', description: 'Read metadata for a caller-supplied file path.', interfaces: ['local'], inputSchema: { path: { type: 'string' } }, outputSchema: { type: 'object' }, permissions: ['filesystem.read'], risk: 'medium', tags: ['file', 'filesystem', 'metadata'] },
   async execute(input) {
     const path = input.path;
     if (typeof path !== 'string' || !path) throw new Error('path is required');
